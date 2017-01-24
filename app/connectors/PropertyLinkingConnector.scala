@@ -36,7 +36,7 @@ class PropertyLinkingConnector(http: HttpGet with HttpPut with HttpPost)(implici
   }
 
   def find(organisationId: Int)(implicit hc: HeaderCarrier): Future[Seq[APIAuthorisation]] = {
-    val url = baseUrl + s"/mdtp_dashboard/properties_view?listYear=$listYear&organisationId=$organisationId"
+    val url = baseUrl + s"/mdtp-dashboard-management-api/mdtp_dashboard/properties_view?listYear=$listYear&organisationId=$organisationId"
     http.GET[JsValue](url).map(js =>{
       (js \ "authorisations").as[Seq[APIAuthorisation]]
     }).map( _
@@ -51,7 +51,7 @@ class PropertyLinkingConnector(http: HttpGet with HttpPut with HttpPost)(implici
   }
 
   def getAssessment(authorisationId: Int)(implicit hc: HeaderCarrier) = {
-    val url = baseUrl + s"/mdtp_dashboard/view_assessment?listYear=$listYear&authorisationId=$authorisationId"
+    val url = baseUrl + s"/mdtp-dashboard-management-api/mdtp_dashboard/view_assessment?listYear=$listYear&authorisationId=$authorisationId"
     http.GET[APIAuthorisation](url).map(pLink =>{
       pLink.valuationHistory.map(assessment => Assessment.fromAPIValuationHistory(assessment, authorisationId, CapacityDeclaration(pLink.authorisationOwnerCapacity, pLink.startDate, pLink.endDate)))
     })

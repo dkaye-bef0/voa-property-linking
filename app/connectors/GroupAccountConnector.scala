@@ -27,7 +27,7 @@ import scala.concurrent.{ExecutionContext, Future}
 class GroupAccountConnector(http: HttpGet with HttpPost)(implicit ec: ExecutionContext) extends ServicesConfig {
 
   val addresses = Wiring().addresses
-  lazy val url =  baseUrl("external-business-rates-data-platform") + "/organisation"
+  lazy val url =  baseUrl("external-business-rates-data-platform") + "/customer-management-api/organisation"
 
   def create(account: GroupAccountSubmission)(implicit hc: HeaderCarrier): Future[JsValue] = {
     account.address.addressUnitId match {

@@ -25,7 +25,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 class AddressConnector(http: HttpGet with HttpPost with HttpPut)(implicit ec: ExecutionContext) extends ServicesConfig {
 
-  val url = baseUrl("external-business-rates-data-platform") + "/address"
+  val url = baseUrl("external-business-rates-data-platform") + "/address-management-api/address"
 
   def find(postcode: String)(implicit hc: HeaderCarrier): Future[Seq[SimpleAddress]] = {
     http.GET[JsValue](s"""$url?pageSize=100&startPoint=1&SearchParameters={"postcode": "$postcode"}""") map { js =>

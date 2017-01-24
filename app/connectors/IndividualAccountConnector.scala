@@ -27,7 +27,7 @@ import scala.concurrent.{ExecutionContext, Future}
 class IndividualAccountConnector(http: HttpGet with HttpPut with HttpPost)(implicit ec: ExecutionContext)
   extends ServicesConfig {
 
-  lazy val baseUrl: String = baseUrl("external-business-rates-data-platform") + "/person"
+  lazy val baseUrl: String = baseUrl("external-business-rates-data-platform") + "/customer-management-api/person"
   val addresses = Wiring().addresses
 
   def create(account: IndividualAccountWrite)(implicit hc: HeaderCarrier): Future[JsValue] = {
