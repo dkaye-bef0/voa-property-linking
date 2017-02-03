@@ -18,11 +18,12 @@ package controllers
 
 import org.scalatest.{BeforeAndAfterEach, MustMatchers, WordSpec}
 import play.api.test.{DefaultAwaitTimeout, FutureAwaits}
-import utils.StubLoginAttemptsRepo
+import utils.{StubHttp, StubLoginAttemptsRepo}
 
 class ControllerSpec extends WordSpec with FutureAwaits with DefaultAwaitTimeout with BeforeAndAfterEach with MustMatchers {
 
   override protected def afterEach() = {
     StubLoginAttemptsRepo.reset()
+    StubHttp.reset()
   }
 }
