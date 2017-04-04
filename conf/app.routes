@@ -25,7 +25,7 @@ GET         /groups/agentCode/:agentCode                                        
 POST        /groups                                                                          @controllers.GroupAccountController.create()
 
 POST        /envelopes/:envId                                                                @controllers.EnvelopeController.create(envId: String)
-PUT         /envelopes/:envId                                                                 @controllers.EnvelopeController.close(envId: String)
+PUT         /envelopes/:envId                                                                @controllers.EnvelopeController.close(envId: String)
 GET         /envelopes                                                                       @controllers.EnvelopeController.get()
 GET         /transfer                                                                        @controllers.FileTransferController.run()
 
