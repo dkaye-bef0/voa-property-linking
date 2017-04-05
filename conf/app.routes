@@ -10,10 +10,16 @@ PUT         /property-representations/update                                    
 PATCH       /property-representations/revoke/:authorisedPartyId                              @controllers.PropertyRepresentationController.revoke(authorisedPartyId: Long)
 PUT         /property-representations/response                                               @controllers.PropertyRepresentationController.response()
 
+GET         /property-link/:authorisationId                                                  @controllers.PropertyLinkingController.get(authorisationId: Long)
 POST        /property-links                                                                  @controllers.PropertyLinkingController.create()
 GET         /property-links/:organisationId                                                  @controllers.PropertyLinkingController.find(organisationId: Int)
+GET         /property-links/for/:organisationId                                              @controllers.PropertyLinkingController.findForOrg(organisationId: Long)
+GET         /property-links/:organisationId/:uarn                                            @controllers.PropertyLinkingController.findFor(organisationId: Long, uarn:Long)
 GET         /dashboard/assessments/:authorisationId                                          @controllers.PropertyLinkingController.assessments(authorisationId: Long)
 GET         /property-links/client-properties/:userId/:agentId                               @controllers.PropertyLinkingController.clientProperties(userId: Long, agentId: Long)
+
+
+
 
 GET         /individuals/:personId                                                           @controllers.IndividualAccountController.get(personId: Int)
 GET         /individuals                                                                     @controllers.IndividualAccountController.withExternalId(externalId)

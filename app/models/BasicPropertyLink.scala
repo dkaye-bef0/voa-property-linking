@@ -19,58 +19,49 @@ package models
 import org.joda.time.DateTime
 import play.api.libs.json.Json
 
-case class DetailedPropertyLink(authorisationId: Long,
+case class BasicPropertyLink(authorisationId: Long,
                                 submissionId: String,
                                 uarn: Long,
                                 organisationId: Long,
                                 personId: Long,
-                                address: String,
                                 capacityDeclaration: CapacityDeclaration,
                                 linkedDate: DateTime,
                                 pending: Boolean,
-                                assessment: Seq[Assessment],
-                                userActingAsAgent: Boolean,
-                                agents: Seq[Party]) {
+                                parties: Seq[APIParty]) {
 }
 
 
-object DetailedPropertyLink {
-  implicit val formats = Json.format[DetailedPropertyLink]
+object BasicPropertyLink {
+  implicit val formats = Json.format[BasicPropertyLink]
 
-  def fromAPIAuthorisation(prop: APIAuthorisation, parties: Seq[Party], userActingAsAgent: Boolean) = {
+  def fromAPIAuthorisation(prop: APIAuthorisation) = {
     val capacityDeclaration = CapacityDeclaration(prop.authorisationOwnerCapacity, prop.startDate, prop.endDate)
-    DetailedPropertyLink(
+    BasicPropertyLink(
       prop.authorisationId,
       prop.submissionId,
       prop.uarn,
       prop.authorisationOwnerOrganisationId,
       prop.authorisationOwnerPersonId,
-      prop.NDRListValuationHistoryItems.headOption.map(_.address).getOrElse("No address found"),
       capacityDeclaration,
       prop.createDatetime,
       prop.authorisationStatus != "APPROVED",
-      prop.NDRListValuationHistoryItems.map(x => Assessment.fromAPIValuationHistory(x, prop.authorisationId, capacityDeclaration)),
-      userActingAsAgent,
-      parties
+      prop.parties
     )
   }
 
-  def fromAPIAuthorisationResult(prop: APIAuthorisationResult, parties: Seq[Party], userActingAsAgent: Boolean):Option[DetailedPropertyLink] = {
+  def fromAPIAuthorisationResult(prop: APIAuthorisationResult):Option[BasicPropertyLink] = {
     val capacityDeclaration = CapacityDeclaration(prop.authorisationOwnerCapacity, prop.startDate, prop.endDate)
     prop.authorisationOwnerPersonId.map {
-      DetailedPropertyLink(
+      BasicPropertyLink(
         prop.id.get,
         prop.submissionId,
         prop.uarn,
         prop.authorisationOwnerOrganisationId,
         _,
-        "",
         capacityDeclaration,
         prop.createDatetime,
         prop.authorisationStatus != "APPROVED",
-        Seq.empty,
-        userActingAsAgent,
-        parties
+        prop.parties.getOrElse(Seq[APIParty]())
       )
     }
   }

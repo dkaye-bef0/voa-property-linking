@@ -16,12 +16,14 @@
 
 package controllers
 
+import java.net.URLEncoder
+
 import com.github.tomakehurst.wiremock.client.WireMock
 import com.github.tomakehurst.wiremock.client.WireMock._
 import connectors._
 import helpers.WithSimpleWsHttpTestApplication
 import infrastructure.SimpleWSHttp
-import models._
+import models.{APIAuthorisation, _}
 import org.joda.time.{DateTime, LocalDate}
 import play.api.http.ContentTypes
 import play.api.libs.json.Json
@@ -253,4 +255,340 @@ class PropertyLinkingControllerSpec
     }
   }
 
+  "get" should {
+    "show the authorisation with a given authorisationId" in {
+      val userOrgId = 111
+      val agentOrgId = 222
+      val otherUserOrgId = 333
+      val specificAuthorisationId = 100
+
+      val dummyProperty = APIAuthorisationResult(Some(specificAuthorisationId), 4, 8, Some(userOrgId),
+        "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "1231", Some(Seq())
+      )
+
+      val dummyAuthorisedProperty = Seq(
+        //prop with agent and OtherAgent
+        APIAuthorisationResult(Some(12346), 4, 8, Some(userOrgId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "submissionId1",
+          Some(Seq(
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        )
+      )
+
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation/${specificAuthorisationId}"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(Json.toJson(dummyProperty).toString)
+        )
+      )
+
+      val propertyRepresentations = APIPropertyRepresentations(
+        0,
+        Seq(APIPropertyRepresentation(userOrgId, "submissionId1", otherUserOrgId, "Client1Ltd", "", "", "", LocalDate.now(), "APPROVED"))
+      )
+      stubFor(get(urlEqualTo(s"/mdtp-dashboard-management-api/mdtp_dashboard/agent_representation_requests?status=APPROVED&organisationId=$userOrgId&startPoint=1"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(Json.toJson(propertyRepresentations).toString)
+        )
+      )
+      val p = APIAuthorisationQuery(None, None, Some("submissionId1"))
+      val params = URLEncoder.encode(Json.toJson(p).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$params"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyAuthorisedProperty).toString}}""")
+        )
+      )
+
+      val res = testPropertyLinkingController.get(specificAuthorisationId)(FakeRequest())
+      status(res) shouldBe OK
+      val r = Json.parse(contentAsString(res)).as[BasicPropertyLink]
+      r.authorisationId shouldBe specificAuthorisationId
+    }
+  }
+
+  "findFor" should {
+    "return any user's property links for specific UARN when they don't have any clients" in {
+      val userUserId = 1
+      val userOrgId = 111
+      val agentOrgId = 222
+      val otherAgentOrgId = 333
+      val specificUarn = 9999
+
+      val dummyProperties = Seq(
+        APIAuthorisationResult(Some(100), specificUarn, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "1230",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        ),
+        APIAuthorisationResult(Some(101), specificUarn, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now().minusDays(100), Some(LocalDate.now().minusDays(1)), "1231",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        ),
+        APIAuthorisationResult(Some(102), specificUarn, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now().minusDays(200), Some(LocalDate.now().minusDays(101)), "1232",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        )
+      )
+
+      val userAndUarnQuery = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(Some(userOrgId), Some(specificUarn), None)).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$userAndUarnQuery"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyProperties).toString}}""")
+        )
+      )
+
+      val propertyRepresentations = APIPropertyRepresentations(0, Seq())
+      stubFor(get(urlEqualTo(s"/mdtp-dashboard-management-api/mdtp_dashboard/agent_representation_requests?status=APPROVED&organisationId=$userOrgId&startPoint=1"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(Json.toJson(propertyRepresentations).toString)
+        )
+      )
+
+      val res = testPropertyLinkingController.findFor(userOrgId, specificUarn)(FakeRequest())
+      status(res) shouldBe OK
+      val uarns = Json.parse(contentAsString(res)).as[Seq[BasicPropertyLink]].map(_.uarn).distinct
+      uarns shouldBe Seq(specificUarn)
+      val userOrgIds = Json.parse(contentAsString(res)).as[Seq[BasicPropertyLink]].map(_.organisationId).distinct
+      userOrgIds shouldBe Seq(userOrgId)
+    }
+
+    "return any user's property links for specific UARN" in {
+      val userUserId = 101
+      val userOrgId = 111
+      val clientOrgId = 112
+      val agentOrgId = 222
+      val otherAgentOrgId = 333
+      val otherUserId = 212
+      val specificUarn = 9999
+
+      val dummyProperties = Seq(
+        APIAuthorisationResult(Some(100), specificUarn, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "1230",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        ),
+        APIAuthorisationResult(Some(101), specificUarn, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now().minusDays(100), Some(LocalDate.now().minusDays(1)), "1231",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        ),
+        APIAuthorisationResult(Some(102), specificUarn, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now().minusDays(200), Some(LocalDate.now().minusDays(101)), "1232",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        )
+      )
+
+      val userAndUarnQuery = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(Some(userOrgId), Some(specificUarn), None)).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$userAndUarnQuery"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyProperties).toString}}""")
+        )
+      )
+
+      val propertyRepresentations = APIPropertyRepresentations(
+        0, Seq(
+          APIPropertyRepresentation(userOrgId, "submissionId1", clientOrgId, "Client1Ltd", "", "", "", LocalDate.now(), "APPROVED"),
+          APIPropertyRepresentation(userOrgId, "submissionId2", clientOrgId, "Client1Ltd", "", "", "", LocalDate.now(), "APPROVED")
+        )
+      )
+      stubFor(get(urlEqualTo(s"/mdtp-dashboard-management-api/mdtp_dashboard/agent_representation_requests?status=APPROVED&organisationId=$userOrgId&startPoint=1"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(Json.toJson(propertyRepresentations).toString)
+        )
+      )
+
+      val dummyAuthorisedProperty1 = Seq(
+        //prop with agent and OtherAgent
+        APIAuthorisationResult(Some(12346), specificUarn, clientOrgId, Some(otherUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "submissionId1",
+          Some(Seq(APIParty(4, "APPROVED", userOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))))
+        )
+      )
+      val dummyAuthorisedProperty2 = Seq(
+        //prop with agent and OtherAgent
+        APIAuthorisationResult(Some(12347), 111111, otherAgentOrgId, Some(otherUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "submissionId2",
+          Some(Seq(APIParty(5, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))))
+        )
+      )
+      val submission1Query = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(None, None, Some("submissionId1"))).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$submission1Query"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyAuthorisedProperty1).toString}}""")
+        )
+      )
+      val submission2Query = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(None, None, Some("submissionId2"))).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$submission2Query"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyAuthorisedProperty2).toString}}""")
+        )
+      )
+
+      val res = testPropertyLinkingController.findFor(userOrgId, specificUarn)(FakeRequest())
+      status(res) shouldBe OK
+      val uarns = Json.parse(contentAsString(res)).as[Seq[BasicPropertyLink]].map(_.uarn).distinct
+      uarns shouldBe Seq(specificUarn)
+      val userOrgIds = Json.parse(contentAsString(res)).as[Seq[BasicPropertyLink]].map(_.organisationId).distinct
+      userOrgIds shouldBe Seq(userOrgId, clientOrgId)
+    }
+    "return all properties for an organisationId" in {
+      val userUserId = 101
+      val userOrgId = 111
+      val clientOrgId = 112
+      val agentOrgId = 222
+      val otherAgentOrgId = 606
+      val otherUserOrgId = 333
+      val otherUserId = 212
+
+      val dummyProperties = Seq(
+        APIAuthorisationResult(Some(100), 9999, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "1230",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        ),
+        APIAuthorisationResult(Some(101), 8888, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now().minusDays(100), Some(LocalDate.now().minusDays(1)), "1231",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        ),
+        APIAuthorisationResult(Some(102), 7777, userOrgId, Some(userUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now().minusDays(200), Some(LocalDate.now().minusDays(101)), "1232",
+          Some(Seq(
+            APIParty(3, "APPROVED", otherAgentOrgId, Seq(Permissions(3, "START_AND_CONTINUE", "CONTINUE_ONLY", None))),
+            APIParty(4, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))
+          ))
+        )
+      )
+
+      val userAndUarnQuery = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(Some(userOrgId), None, None)).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$userAndUarnQuery"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyProperties).toString}}""")
+        )
+      )
+
+      val propertyRepresentations = APIPropertyRepresentations(
+        0, Seq(
+          APIPropertyRepresentation(userOrgId, "submissionId1", clientOrgId, "Client1Ltd", "", "", "", LocalDate.now(), "APPROVED"),
+          APIPropertyRepresentation(userOrgId, "submissionId2", clientOrgId, "Client1Ltd", "", "", "", LocalDate.now(), "APPROVED")
+        )
+      )
+      stubFor(get(urlEqualTo(s"/mdtp-dashboard-management-api/mdtp_dashboard/agent_representation_requests?status=APPROVED&organisationId=$userOrgId&startPoint=1"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(Json.toJson(propertyRepresentations).toString)
+        )
+      )
+
+      val dummyAuthorisedProperty1 = Seq(
+        //prop with agent and OtherAgent
+        APIAuthorisationResult(Some(12346), 6666, clientOrgId, Some(otherUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "submissionId1",
+          Some(Seq(APIParty(4, "APPROVED", userOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))))
+        )
+      )
+      val dummyAuthorisedProperty2 = Seq(
+        //prop with agent and OtherAgent
+        APIAuthorisationResult(Some(12347), 5555, otherUserOrgId, Some(otherUserId), "AAA", "ASDf", "string", DateTime.now(), LocalDate.now(), None, "submissionId2",
+          Some(Seq(APIParty(5, "APPROVED", agentOrgId, Seq(Permissions(4, "CONTINUE_ONLY", "NOT_PERMITTED", None)))))
+        )
+      )
+      val submission1Query = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(None, None, Some("submissionId1"))).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$submission1Query"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyAuthorisedProperty1).toString}}""")
+        )
+      )
+      val submission2Query = URLEncoder.encode(Json.toJson(APIAuthorisationQuery(None, None, Some("submissionId2"))).toString, "UTF-8")
+      stubFor(get(urlEqualTo(s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=$submission2Query"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(s"""{"authorisations": ${Json.toJson(dummyAuthorisedProperty2).toString}}""")
+        )
+      )
+
+      val res = testPropertyLinkingController.findForOrg(userOrgId)(FakeRequest())
+      status(res) shouldBe OK
+      val uarns = Json.parse(contentAsString(res)).as[Seq[BasicPropertyLink]].map(_.uarn).distinct
+      uarns shouldBe Seq(9999,8888,7777,6666,5555)
+      val userOrgIds = Json.parse(contentAsString(res)).as[Seq[BasicPropertyLink]].map(_.organisationId).distinct.sorted
+      userOrgIds shouldBe Seq(userOrgId, otherUserOrgId, clientOrgId).sorted
+    }
+  }
+
+  "setEnd" should {
+
+    val validAuthId = 99
+    val invalidAuthId = 88
+    val requestData = PropertyLinkEndDateRequest(validAuthId.toString, LocalDate.now())
+
+    "return OK with valid call" in {
+      stubFor(patch(urlEqualTo(s"/authorisation-management-api/authorisation/$validAuthId"))
+        .willReturn(aResponse
+          .withStatus(200)
+          .withHeader("Content-Type", JSON)
+          .withBody(
+            """{
+              |   "id":99,
+              |   "message":"Success",
+              |   "responseTime":78
+              |}""".stripMargin)
+        )
+      )
+
+      val res = testPropertyLinkingController.setEnd(validAuthId)(request.withBody(Json.toJson(requestData)))
+      status(res) shouldBe OK
+
+    }
+
+    "return 404 when called with a non existing property link" in {
+      stubFor(patch(urlEqualTo(s"/authorisation-management-api/authorisation/$invalidAuthId"))
+        .willReturn(aResponse
+          .withStatus(404)
+          .withHeader("Content-Type", JSON)
+          .withBody(
+            """{
+              |   "uniqueId":"88",
+              |   "errorTypeNum":404,
+              |   "errorTypeDesc":"string",
+              |   "errorMessage":"string"
+              |}""".stripMargin))
+      )
+
+      val res = testPropertyLinkingController.setEnd(invalidAuthId)(request.withBody(Json.toJson(requestData.copy(authorisationId = invalidAuthId.toString()))))
+      res.onComplete {
+        case _ => status(res) shouldBe NOT_FOUND
+      }
+    }
+  }
 }

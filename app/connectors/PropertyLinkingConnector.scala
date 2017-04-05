@@ -16,10 +16,12 @@
 
 package connectors
 
+import java.net.URLEncoder
 import javax.inject.{Inject, Named}
 
-import models._
-import play.api.libs.json.JsValue
+import models.{APIAuthorisationQuery, _}
+import org.omg.CosNaming.NamingContextPackage.NotFound
+import play.api.libs.json.{JsValue, Json}
 import uk.gov.hmrc.play.config.ServicesConfig
 import uk.gov.hmrc.play.http._
 import uk.gov.hmrc.play.http.ws.WSHttp
@@ -60,4 +62,34 @@ class PropertyLinkingConnector @Inject() (@Named("VoaBackendWsHttp") http: WSHtt
       pLink.NDRListValuationHistoryItems.map(assessment => Assessment.fromAPIValuationHistory(assessment, authorisationId, CapacityDeclaration(pLink.authorisationOwnerCapacity, pLink.startDate, pLink.endDate)))
     })
   }
+
+  def setEnd(authorisationId: Long, endRequest: APIPropertyLinkEndDateRequest)(implicit hc: HeaderCarrier): Future[Unit] = {
+    val url = baseUrl + s"/authorisation-management-api/authorisation/${authorisationId}"
+    http.PATCH[APIPropertyLinkEndDateRequest, HttpResponse](url, endRequest) map { _ => () }
+  }
+
+  private def findFor(q:APIAuthorisationQuery)(implicit hc: HeaderCarrier) = {
+    val url = baseUrl + s"/authorisation-management-api/authorisation?startPoint=1&pageSize=100&searchParameters=${URLEncoder.encode(Json.toJson(q).toString, "UTF-8")}"
+    http.GET[JsValue](url).map(js => {
+      (js \ "authorisations").as[Seq[APIAuthorisationResult]]
+    }).map(_
+      .filterNot(_.authorisationStatus.toUpperCase == "REVOKED")
+      .filterNot(_.authorisationStatus.toUpperCase == "DECLINED")
+    )
+  }
+
+  def findFor(organisationId: Long, uarn: Option[Long])(implicit hc: HeaderCarrier): Future[Seq[APIAuthorisationResult]] = {
+    findFor(new APIAuthorisationQuery(Some(organisationId), uarn, None))
+  }
+
+  def getBySubmissionId(submissionId:String)(implicit hc: HeaderCarrier): Future[Option[APIAuthorisationResult]] = {
+    findFor(new APIAuthorisationQuery(None, None, Some(submissionId))).map(o => o.headOption)
+  }
+
+  def get(authorisationId: Long)(implicit hc: HeaderCarrier): Future[APIAuthorisationResult] = {
+    val url = s"$baseUrl/authorisation-management-api/authorisation/$authorisationId"
+    http.GET[JsValue](url).map(_.as[APIAuthorisationResult])
+  }
+
 }
+
