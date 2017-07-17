@@ -35,7 +35,10 @@ class PropertyRepresentationController @Inject() (representations: PropertyRepre
   }
 
   def forAgent(status: String, organisationId: Long, pagination: PaginationParams) = Action.async { implicit request =>
-    representations.forAgent(status, organisationId, pagination).map( x=> Ok(Json.toJson(x)))
+    representations.forAgent(status, organisationId, pagination) map { reps =>
+      val filtered = reps.propertyRepresentations.filterNot(rep => Seq("DECLINED", "REVOKED").contains(rep.status.toUpperCase))
+      Ok(Json.toJson(reps.copy(propertyRepresentations = filtered)))
+    }
   }
 
   def create() = Action.async(parse.json) { implicit request =>
