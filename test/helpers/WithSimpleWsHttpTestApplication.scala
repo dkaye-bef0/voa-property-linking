@@ -18,7 +18,7 @@ package helpers
 
 import infrastructure.SimpleWSHttp
 import org.scalatest.Suite
-import play.api.Application
+import play.api.{Application, Mode}
 import play.api.inject.bind
 import play.api.inject.guice.GuiceApplicationBuilder
 import uk.gov.hmrc.play.http.ws.WSHttp
@@ -29,8 +29,11 @@ trait WithSimpleWsHttpTestApplication extends WithFakeApplication {
   this: Suite =>
 
   override lazy val fakeApplication: Application = new GuiceApplicationBuilder()
-    .bindings(bindModules: _*)
+    .in(Mode.Test)
     .overrides(bind[WSHttp].to[SimpleWSHttp])
     .configure("metrics.enabled" -> "false")
+    .disable(classOf[play.modules.reactivemongo.ReactiveMongoHmrcModule])
+    .disable(classOf[modules.FileTransferScheduler])
+    .disable(classOf[modules.MongoStartup])
     .build()
 }

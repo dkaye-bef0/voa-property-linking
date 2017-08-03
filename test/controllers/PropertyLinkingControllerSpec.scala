@@ -16,6 +16,7 @@
 
 package controllers
 
+import config.MongoDbProvider
 import connectors._
 import models._
 import org.joda.time.{DateTime, LocalDate}
@@ -23,11 +24,13 @@ import org.mockito.ArgumentMatchers.{eq => mockEq, _}
 import org.mockito.Mockito.{inOrder => ordered, _}
 import org.scalatest.mock.MockitoSugar
 import org.scalatestplus.play.OneAppPerSuite
+import play.api.{Configuration, Mode}
 import play.api.inject.bind
 import play.api.inject.guice.{GuiceApplicationBuilder, GuiceInjectorBuilder}
 import play.api.libs.json.Json
 import play.api.test.FakeRequest
 import play.api.test.Helpers._
+import reactivemongo.api.DB
 import uk.gov.hmrc.play.config.inject.ServicesConfig
 import uk.gov.hmrc.play.http.HttpReads
 import uk.gov.hmrc.play.http.ws.WSHttp
@@ -46,9 +49,12 @@ class PropertyLinkingControllerSpec extends UnitSpec with MockitoSugar with With
   val baseUrl = "http://localhost:9999"
 
   override lazy val fakeApplication = new GuiceApplicationBuilder()
-    .configure("run.mode" -> "Test")
+    .in(Mode.Test)
     .overrides(bind[WSHttp].qualifiedWith("VoaBackendWsHttp").toInstance(mockWS))
     .overrides(bind[ServicesConfig].toInstance(mockConf))
+    .disable(classOf[play.modules.reactivemongo.ReactiveMongoHmrcModule])
+    .disable(classOf[modules.FileTransferScheduler])
+    .disable(classOf[modules.MongoStartup])
     .build()
 
   "find" should {
