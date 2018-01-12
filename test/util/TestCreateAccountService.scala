@@ -83,11 +83,18 @@ object TestCreateAccountService {
       (responseBodyAsXML \ "UserID").text
     }
   }
+
+  def createUserInBrdps(): Unit = {
+
+  }
 }
 
 class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with ScalaFutures with WithFakeApplication {
   val organisationId = "123"
   val user = "new user"
+
+  it should "Create user in BRDPS" in {
+  }
 
   "GG user service" should "create user under a GG organisation" in {
     Await.result(TestCreateAccountService.createOrganisationUser("username1","password1","org1"),10 seconds)
