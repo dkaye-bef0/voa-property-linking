@@ -16,19 +16,36 @@
 
 package util
 
+import com.codahale.metrics.MetricRegistry
+import com.kenshoo.play.metrics.Metrics
 import config.WSHttp
+import connectors.{AddressConnector, IndividualAccountConnector}
+import infrastructure.VOABackendWSHttp
+import models.{IndividualAccountSubmission, IndividualDetails}
 import org.mockito.ArgumentMatchers.{eq => matching, _}
 import org.mockito.Mockito._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.{FlatSpec, MustMatchers}
 import uk.gov.hmrc.http.{HeaderCarrier, HttpReads, HttpResponse}
+import uk.gov.hmrc.play.config.inject.ServicesConfig
 import uk.gov.hmrc.play.test.WithFakeApplication
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
 import scala.xml.XML
+
+object LOG {
+  def apply(message:String): Unit = {
+    println(s"\n\n$message\n\n")
+  }
+}
+
+class DisabledMetrics extends Metrics {
+  override def defaultRegistry: MetricRegistry = new MetricRegistry()
+  override def toJson: String = "{}"
+}
 
 case class RegistrationRequest(fullName: String, plainTextPassword: String, affinityGroup: String = "organisation", emailAddress: String, description: Option[String] = None) {
   def toXml:scala.xml.Elem =
@@ -71,8 +88,7 @@ object TestCreateAccountService {
     handleRegisterUserResponse(
       http.POSTString(
         s"$ggProxyUrl/government-gateway-proxy/api/$api/$action",
-        xml,
-        Seq("Content-Type" -> "application/xml")
+        xml, Seq("Content-Type" -> "application/xml")
       )(implicitly[HttpReads[HttpResponse]], hc, implicitly[ExecutionContext])
     )
   }
@@ -89,15 +105,26 @@ object TestCreateAccountService {
   }
 }
 
-class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with ScalaFutures with WithFakeApplication {
+class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with MockitoSugar with ScalaFutures with WithFakeApplication {
+  implicit private lazy val hc: HeaderCarrier = HeaderCarrier()
   val organisationId = "123"
   val user = "new user"
 
+  val http = new VOABackendWSHttp(new DisabledMetrics())
+  val config = mock[ServicesConfig]
+  when(config.baseUrl(matches("external-business-rates-data-platform"))).thenReturn("http://localhost:9536")
+  val addresses = new AddressConnector(http,config)
+  val individuals = new IndividualAccountConnector(addresses,http)
+
   it should "Create user in BRDPS" in {
+    val result = individuals.create(IndividualAccountSubmission(externalId="EXT-1",trustId="TRUST-1",organisationId=1,
+      IndividualDetails(firstName="Test", lastName="User", email="test.user@mail.com", phone1="0123456789", phone2=None, addressId=1)))
+      .map { accountId => LOG(s"accountId: $accountId") }
+    Await.result(result,10 seconds)
   }
 
   "GG user service" should "create user under a GG organisation" in {
-    Await.result(TestCreateAccountService.createOrganisationUser("username1","password1","org1"),10 seconds)
+    // Await.result(TestCreateAccountService.createOrganisationUser("username1","password1","org1"),10 seconds)
   }
 
   "created user" should "not be asked to register when logging in" in {
