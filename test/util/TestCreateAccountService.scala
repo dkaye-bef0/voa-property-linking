@@ -27,6 +27,7 @@ import org.mockito.Mockito._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.{FlatSpec, MustMatchers}
+import play.api.libs.json.Json
 import uk.gov.hmrc.http.{HeaderCarrier, HttpReads, HttpResponse}
 import uk.gov.hmrc.play.config.inject.ServicesConfig
 import uk.gov.hmrc.play.test.WithFakeApplication
@@ -105,6 +106,18 @@ object TestCreateAccountService {
   }
 }
 
+/*
+personId: 398303440
+organisationId: 171684128
+personal address: 1197007448
+business address: 1197007448
+
+ownerId: 426291880
+organisationId: 1000000005
+personal address: -1630451358
+business address: 1000000000
+ */
+
 class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with MockitoSugar with ScalaFutures with WithFakeApplication {
   implicit private lazy val hc: HeaderCarrier = HeaderCarrier()
   val organisationId = "123"
@@ -117,9 +130,12 @@ class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with Mocki
   val individuals = new IndividualAccountConnector(addresses,http)
 
   it should "Create user in BRDPS" in {
-    val result = individuals.create(IndividualAccountSubmission(externalId="EXT-1",trustId="TRUST-1",organisationId=1,
-      IndividualDetails(firstName="Test", lastName="User", email="test.user@mail.com", phone1="0123456789", phone2=None, addressId=1)))
-      .map { accountId => LOG(s"accountId: $accountId") }
+    val account = IndividualAccountSubmission(externalId="EXT-1",trustId="TRUST-1",organisationId=1000000000,
+      IndividualDetails(firstName="Test", lastName="User", email="test.user@mail.com", phone1="0123456789", phone2=None, addressId=1000000005))
+    // val json = Json.toJson(account.toAPIIndividualAccount)
+    // LOG(s"JSON: ${Json.prettyPrint(json)}")
+    val result = individuals.create(account).map {
+      accountId => LOG(s"accountId: $accountId") }
     Await.result(result,10 seconds)
   }
 
