@@ -116,6 +116,12 @@ ownerId: 426291880
 organisationId: 1000000005
 personal address: -1630451358
 business address: 1000000000
+
+stub-group-3
+personId: 515833925
+organisationId: 5000000003
+personal address: 1197007448
+business address: 1000000000
  */
 
 class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with MockitoSugar with ScalaFutures with WithFakeApplication {
