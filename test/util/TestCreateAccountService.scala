@@ -16,11 +16,13 @@
 
 package util
 
+import java.time.{Clock, Instant, ZoneId}
+
 import com.codahale.metrics.MetricRegistry
 import com.kenshoo.play.metrics.Metrics
-import connectors.{AddressConnector, IndividualAccountConnector}
+import connectors.{AddressConnector, GroupAccountConnector, IndividualAccountConnector}
 import infrastructure.VOABackendWSHttp
-import models.{IndividualAccountSubmission, IndividualDetails}
+import models.{GroupAccount, IndividualAccountSubmission, IndividualDetails}
 import org.mockito.ArgumentMatchers.{eq => matches, _}
 import org.mockito.Mockito._
 import org.scalatest.concurrent.ScalaFutures
@@ -95,7 +97,9 @@ object GovernmentGatewayUser {
 }
 
 object TestCreateAccountService extends MockitoSugar {
-  // val http = WSHttp
+  private implicit val hc: HeaderCarrier = HeaderCarrier()
+  private implicit val clock:java.time.Clock = Clock.fixed(Instant.now, ZoneId.systemDefault)
+
   val ggStubUrl = "http://localhost:8082"
   val ggProxyUrl = "http://localhost:9907"
   val http = new VOABackendWSHttp(new DisabledMetrics())
@@ -103,7 +107,7 @@ object TestCreateAccountService extends MockitoSugar {
   when(config.baseUrl(matches("external-business-rates-data-platform"))).thenReturn("http://localhost:9536")
   val addresses = new AddressConnector(http,config)
   val individuals = new IndividualAccountConnector(addresses,http)
-  implicit private val hc: HeaderCarrier = HeaderCarrier()
+  val groups = new GroupAccountConnector(http,config)
 
   def createOrganisationUser(username:String,password:String,organisationId:String): Future[String] = {
     registerUser(RegistrationRequest(fullName="Test User",plainTextPassword=password,emailAddress=s"$username@mail.com").toXml)
@@ -131,25 +135,25 @@ object TestCreateAccountService extends MockitoSugar {
   }
 
   def createUser(
-    username:String="user1", firstName:String="Test", lastName:String="User", email:String="test.user@mail.com",
-    externalId:String="EXT-1", trustId:String="TRUST-1", organisationId:Int=1000000000,addressId:Long=1000000005) = {
-    val account = IndividualAccountSubmission(externalId=externalId,trustId=trustId,organisationId=organisationId,
-      IndividualDetails(firstName=firstName, lastName=lastName, email=email, phone1="0123456789", phone2=None, addressId=addressId))
-    // val json = Json.toJson(account.toAPIIndividualAccount)
-    // LOG(s"JSON: ${Json.prettyPrint(json)}")
-    individuals.create(account)
-      .map { accountId => LOG(s"accountId: $accountId"); accountId.id }
-      .map { accountId =>
-        val enrolment = Enrolment(key="HMRC-VOA-CCA",identifier=accountId.toString,state=Enrolment.ACTIVATED)
-        GovernmentGatewayUser(
-          name=s"$firstName $lastName",username=username,password="password1",
-          role="User",affinityGroup="Organisation",credentialIdentifier=accountId.toString,
-          groupIdentifier="stub-group-3",enrolments=List(enrolment),allEnrolments=List(enrolment),
-          knownFacts=List(KnownFact(key="VOAPersonID",value=accountId.toString),KnownFact(key="BusPostcode",value="ABC 123"))) }
-        .flatMap { user =>
-          println(s"user: ${Json.toJson(user)}")
-          http.POST[GovernmentGatewayUser,HttpResponse](s"$ggStubUrl/test-only/users",user,Seq("Content-Type"->"application/json")) }
+    username:String="user1", password:String="pass1",
+    firstName:String="Test", lastName:String="User",
+    email:String="test.user@mail.com", groupId:String="stub-group-3",
+    externalId:String="EXT-1", trustId:String="TRUST-1") = {
+
+    groups.findByGGID(groupId).flatMap(_.fold(Future.successful(())) { group =>
+      val account = IndividualAccountSubmission(externalId=externalId,trustId=trustId,organisationId=group.id,
+        IndividualDetails(firstName=firstName, lastName=lastName, email=email, phone1=group.phone, phone2=None, addressId=group.addressId))
+      individuals.create(account)
+        .map(_.id).map { accountId =>
+          val enrolment = Enrolment(key="HMRC-VOA-CCA",identifier=accountId.toString,state=Enrolment.ACTIVATED)
+          GovernmentGatewayUser(
+            name=s"$firstName $lastName",username=username,password=password,
+            role="User",affinityGroup="Organisation",credentialIdentifier=accountId.toString,
+            groupIdentifier=groupId,enrolments=List(enrolment),allEnrolments=List(enrolment),
+            knownFacts=List(KnownFact(key="VOAPersonID",value=accountId.toString),KnownFact(key="BusPostcode",value="ABC 123"))) }
+        .flatMap(http.POST[GovernmentGatewayUser,HttpResponse](s"$ggStubUrl/test-only/users",_,Seq("Content-Type"->"application/json")))
         .map(x => println(s"result: $x"))
+    })
   }
 }
 
@@ -183,8 +187,8 @@ class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with Mocki
   val addresses = new AddressConnector(http,config)
   val individuals = new IndividualAccountConnector(addresses,http)
 
-  it should "Create user in BRDPS and GG stubs" in {
-    val result = service.createUser()
+  it should "Create user in Data Platform and GG stubs" in {
+    val result = service.createUser(username="user3",password="pass3",groupId="stub-group-3")
     Await.result(result,10 seconds)
   }
 
