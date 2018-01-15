@@ -18,16 +18,15 @@ package util
 
 import com.codahale.metrics.MetricRegistry
 import com.kenshoo.play.metrics.Metrics
-import config.WSHttp
 import connectors.{AddressConnector, IndividualAccountConnector}
 import infrastructure.VOABackendWSHttp
 import models.{IndividualAccountSubmission, IndividualDetails}
-import org.mockito.ArgumentMatchers.{eq => matching, _}
+import org.mockito.ArgumentMatchers.{eq => matches, _}
 import org.mockito.Mockito._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.{FlatSpec, MustMatchers}
-import play.api.libs.json.Json
+import play.api.libs.json.{JsValue, Json}
 import uk.gov.hmrc.http.{HeaderCarrier, HttpReads, HttpResponse}
 import uk.gov.hmrc.play.config.inject.ServicesConfig
 import uk.gov.hmrc.play.test.WithFakeApplication
@@ -71,9 +70,39 @@ case class RegistrationRequest(fullName: String, plainTextPassword: String, affi
       </urn:GsoRegisterPrincipalUserIDXmlInput>
 }
 
-object TestCreateAccountService {
-  val http = WSHttp
+case class KnownFact(key:String,value:String)
+
+object KnownFact {
+  implicit val format = Json.format[KnownFact]
+}
+
+case class Enrolment(key: String, identifier: String, state: String)
+
+object Enrolment {
+  implicit val format = Json.format[Enrolment]
+
+  val ACTIVATED = "Activated"
+  val NOT_YET_ACTIVATED = "NotYetActivated"
+}
+
+case class GovernmentGatewayUser(
+  name:String,username:String,password:String,role:String,affinityGroup:String,
+  credentialIdentifier:String,groupIdentifier:String,enrolments:List[Enrolment],
+  allEnrolments:List[Enrolment],knownFacts:List[KnownFact])
+
+object GovernmentGatewayUser {
+  implicit val format = Json.format[GovernmentGatewayUser]
+}
+
+object TestCreateAccountService extends MockitoSugar {
+  // val http = WSHttp
+  val ggStubUrl = "http://localhost:8082"
   val ggProxyUrl = "http://localhost:9907"
+  val http = new VOABackendWSHttp(new DisabledMetrics())
+  val config = mock[ServicesConfig]
+  when(config.baseUrl(matches("external-business-rates-data-platform"))).thenReturn("http://localhost:9536")
+  val addresses = new AddressConnector(http,config)
+  val individuals = new IndividualAccountConnector(addresses,http)
   implicit private val hc: HeaderCarrier = HeaderCarrier()
 
   def createOrganisationUser(username:String,password:String,organisationId:String): Future[String] = {
@@ -101,8 +130,26 @@ object TestCreateAccountService {
     }
   }
 
-  def createUserInBrdps(): Unit = {
-
+  def createUser(
+    username:String="user1", firstName:String="Test", lastName:String="User", email:String="test.user@mail.com",
+    externalId:String="EXT-1", trustId:String="TRUST-1", organisationId:Int=1000000000,addressId:Long=1000000005) = {
+    val account = IndividualAccountSubmission(externalId=externalId,trustId=trustId,organisationId=organisationId,
+      IndividualDetails(firstName=firstName, lastName=lastName, email=email, phone1="0123456789", phone2=None, addressId=addressId))
+    // val json = Json.toJson(account.toAPIIndividualAccount)
+    // LOG(s"JSON: ${Json.prettyPrint(json)}")
+    individuals.create(account)
+      .map { accountId => LOG(s"accountId: $accountId"); accountId.id }
+      .map { accountId =>
+        val enrolment = Enrolment(key="HMRC-VOA-CCA",identifier=accountId.toString,state=Enrolment.ACTIVATED)
+        GovernmentGatewayUser(
+          name=s"$firstName $lastName",username=username,password="password1",
+          role="User",affinityGroup="Organisation",credentialIdentifier=accountId.toString,
+          groupIdentifier="stub-group-3",enrolments=List(enrolment),allEnrolments=List(enrolment),
+          knownFacts=List(KnownFact(key="VOAPersonID",value=accountId.toString),KnownFact(key="BusPostcode",value="ABC 123"))) }
+        .flatMap { user =>
+          println(s"user: ${Json.toJson(user)}")
+          http.POST[GovernmentGatewayUser,HttpResponse](s"$ggStubUrl/test-only/users",user,Seq("Content-Type"->"application/json")) }
+        .map(x => println(s"result: $x"))
   }
 }
 
@@ -126,6 +173,7 @@ business address: 1000000000
 
 class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with MockitoSugar with ScalaFutures with WithFakeApplication {
   implicit private lazy val hc: HeaderCarrier = HeaderCarrier()
+  val service = TestCreateAccountService
   val organisationId = "123"
   val user = "new user"
 
@@ -135,13 +183,8 @@ class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with Mocki
   val addresses = new AddressConnector(http,config)
   val individuals = new IndividualAccountConnector(addresses,http)
 
-  it should "Create user in BRDPS" in {
-    val account = IndividualAccountSubmission(externalId="EXT-1",trustId="TRUST-1",organisationId=1000000000,
-      IndividualDetails(firstName="Test", lastName="User", email="test.user@mail.com", phone1="0123456789", phone2=None, addressId=1000000005))
-    // val json = Json.toJson(account.toAPIIndividualAccount)
-    // LOG(s"JSON: ${Json.prettyPrint(json)}")
-    val result = individuals.create(account).map {
-      accountId => LOG(s"accountId: $accountId") }
+  it should "Create user in BRDPS and GG stubs" in {
+    val result = service.createUser()
     Await.result(result,10 seconds)
   }
 
