@@ -16,6 +16,7 @@
 
 package util
 
+import java.util.UUID.randomUUID
 import java.time.{Clock, Instant, ZoneId}
 
 import com.codahale.metrics.MetricRegistry
@@ -135,26 +136,28 @@ object TestCreateAccountService extends MockitoSugar {
     firstName:String="Test", lastName:String, email:String="test.user@mail.com") = {
 
     val affinityGroup = "Organisation"
+    val identifier = randomUUID().toString()
     def groupNotFound = throw new Exception(s"Group '$groupId' could not be found")
     groups.findByGGID(groupId).flatMap(_.fold(groupNotFound) { group =>
-      val account = IndividualAccountSubmission(externalId=credential, trustId="NONIV", organisationId=group.id,
-        IndividualDetails(firstName=firstName, lastName=lastName, email=email, phone1=group.phone, phone2=None, addressId=group.addressId))
+      // val account = IndividualAccountSubmission(externalId=credential, trustId="NONIV", organisationId=group.id,
+      //  IndividualDetails(firstName=firstName, lastName=lastName, email=email, phone1=group.phone, phone2=None, addressId=group.addressId))
       for {
-        accountId <- individuals.create(account).map(_.id)
-        enrolments = List(Enrolment(key="HMRC-VOA-CCA", identifier=accountId.toString, state=Enrolment.ACTIVATED))
-        facts = List(KnownFact(key="VOAPersonID", value=accountId.toString), KnownFact(key="BusPostcode",value="ABC 123"))
+        // accountId <- individuals.create(account).map(_.id)
+        _ <- Future.successful(())
+        enrolments = List[Enrolment](Enrolment(key="HMRC-VOA-CCA", identifier=identifier, state=Enrolment.ACTIVATED))
+        facts = List[KnownFact]()//(KnownFact(key="VOAPersonID", value=accountId.toString), KnownFact(key="BusPostcode",value="ABC 123"))
         user = GovernmentGatewayUser(
-          name=s"$firstName $lastName", username=username,password=password, role="User",
-          affinityGroup=affinityGroup, credentialIdentifier=credential,knownFacts=facts,
+          name=s"$firstName $lastName", username=username, password=password, role="User",
+          affinityGroup=affinityGroup, credentialIdentifier=credential, knownFacts=facts,
           groupIdentifier=groupId, enrolments=enrolments, allEnrolments=enrolments)
         login = GovernmentGatewayLogin(credId = credential, affinityGroup=affinityGroup,
-          enrolments=enrolments.map(x => AuthEnrolment(key=x.key,identifiers = facts)))
+          enrolments=enrolments.map(x => AuthEnrolment(key=x.key, identifiers=facts)))
         _ <- http.POST[GovernmentGatewayUser, HttpResponse](s"$ggStubUrl/test-only/users", user, Seq("Content-Type"->"application/json"))
         auth <- http.POST[GovernmentGatewayLogin, HttpResponse](s"$authUrl/auth/sessions", login, Seq("Content-Type"->"application/json"))
         sessionLink = auth.header("Location").get
         session <- http.GET[Session](s"$authUrl${sessionLink}")
-        _ <- individuals.update(accountId,account.copy(externalId=session.externalId))
-      } yield (auth.status,auth.body,auth.allHeaders,session)
+        // _ <- individuals.update(accountId,account.copy(externalId=session.externalId))
+      } yield session
     }) map { auth => LOG(s"AUTH: $auth")}
   }
 }
@@ -164,7 +167,7 @@ class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with Mocki
   val service = TestCreateAccountService
 
   it should "Create user in Data Platform and GG stubs" in {
-    val id = 5
+    val id = 10
     val result = service.createUser(username=s"user$id", password=s"pass$id", lastName=s"User $id",groupId="stub-group-3", credential=s"cred$id")
     Await.result(result, 10 seconds)
   }
