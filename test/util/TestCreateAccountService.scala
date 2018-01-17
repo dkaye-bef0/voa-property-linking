@@ -29,12 +29,13 @@ import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.{FlatSpec, MustMatchers}
 import play.api.libs.json.Json
+import uk.gov.hmrc.domain.{AgentCode, Nino}
 import uk.gov.hmrc.http.{HeaderCarrier, HttpResponse}
 import uk.gov.hmrc.play.config.inject.ServicesConfig
 import uk.gov.hmrc.play.test.WithFakeApplication
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 
 object LOG {
@@ -55,6 +56,16 @@ object TestCreateAccountService extends MockitoSugar {
     implicit val format = Json.format[KnownFact]
   }
 
+  case class AuthEnrolment(key: String,
+                       identifiers: Seq[KnownFact] = Seq(),
+                       state: String = Enrolment.ACTIVATED/*,
+                       confidenceLevel: ConfidenceLevel = ConfidenceLevel.L0*/) {
+  }
+
+  object AuthEnrolment {
+    implicit val format = Json.format[AuthEnrolment]
+  }
+
   case class Enrolment(key:String, identifier:String, state:String)
 
   object Enrolment {
@@ -62,6 +73,32 @@ object TestCreateAccountService extends MockitoSugar {
 
     val ACTIVATED = "Activated"
     val NOT_YET_ACTIVATED = "NotYetActivated"
+  }
+
+  case class GovernmentGatewayLogin(
+                                     credId: String,
+                                     enrolments: List[AuthEnrolment],
+                                     agentCode: Option[AgentCode] = None,
+                                     nino: Option[Nino] = None,
+                                     affinityGroup: String, // TODO - validate and/or create enum and create org/agent enrolments based on this info
+                                     // credentialRole: Option[CredentialRole],
+                                     sso: Boolean = false,
+                                     twoFactorAuthEnabled: Boolean = false,
+                                     userDetailsLink: Option[String] = None,
+                                     trustId: Option[String] = None,
+                                     // gatewayInformation: Option[GatewayInformation] = None,
+                                     // mdtpInformation: Option[MdtpInformation] = None,
+                                     groupIdentifier: Option[String] = None,
+                                     name: Option[String] = None,
+                                     email: Option[String] = None,
+                                     agentId: Option[String] = None,
+                                     agentFriendlyName: Option[String] = None,
+                                     description: Option[String] = None,
+                                     unreadMessageCount: Option[Int] = None
+                                   )
+
+  object GovernmentGatewayLogin {
+    implicit val format = Json.format[GovernmentGatewayLogin]
   }
 
   case class GovernmentGatewayUser(
@@ -73,11 +110,19 @@ object TestCreateAccountService extends MockitoSugar {
     implicit val format = Json.format[GovernmentGatewayUser]
   }
 
+  case class Session(externalId:String)
+
+  object Session {
+    implicit val format = Json.format[Session]
+  }
+
   private implicit val hc: HeaderCarrier = HeaderCarrier()
   private implicit val clock:java.time.Clock = Clock.fixed(Instant.now, ZoneId.systemDefault)
 
   val ggStubUrl = "http://localhost:8082"
   val ggProxyUrl = "http://localhost:9907"
+  val authUrl = "http://localhost:8500"
+
   val http = new VOABackendWSHttp(new DisabledMetrics())
   val config = mock[ServicesConfig]
   when(config.baseUrl(matches("external-business-rates-data-platform"))).thenReturn("http://localhost:9536")
@@ -87,21 +132,30 @@ object TestCreateAccountService extends MockitoSugar {
 
   def createUser(
     username:String, password:String, groupId:String, credential:String,
-    firstName:String="Test", lastName:String="User", email:String="test.user@mail.com") = {
+    firstName:String="Test", lastName:String, email:String="test.user@mail.com") = {
 
+    val affinityGroup = "Organisation"
     def groupNotFound = throw new Exception(s"Group '$groupId' could not be found")
     groups.findByGGID(groupId).flatMap(_.fold(groupNotFound) { group =>
-      val account = IndividualAccountSubmission(externalId=credential, trustId="TRUST", organisationId=group.id,
+      val account = IndividualAccountSubmission(externalId=credential, trustId="NONIV", organisationId=group.id,
         IndividualDetails(firstName=firstName, lastName=lastName, email=email, phone1=group.phone, phone2=None, addressId=group.addressId))
-      individuals.create(account).map(_.id).map { accountId =>
-        val enrolment = Enrolment(key="HMRC-VOA-CCA", identifier=accountId.toString, state=Enrolment.ACTIVATED)
-        GovernmentGatewayUser(
-          name=s"$firstName $lastName", username=username,password=password,
-          role="User", affinityGroup="Organisation", credentialIdentifier=credential,
-          groupIdentifier=groupId, enrolments=List(enrolment), allEnrolments=List(enrolment),
-          knownFacts=List(KnownFact(key="VOAPersonID", value=accountId.toString), KnownFact(key="BusPostcode",value="ABC 123"))) }
-        .flatMap(http.POST[GovernmentGatewayUser, HttpResponse](s"$ggStubUrl/test-only/users", _, Seq("Content-Type"->"application/json")))
-    })
+      for {
+        accountId <- individuals.create(account).map(_.id)
+        enrolments = List(Enrolment(key="HMRC-VOA-CCA", identifier=accountId.toString, state=Enrolment.ACTIVATED))
+        facts = List(KnownFact(key="VOAPersonID", value=accountId.toString), KnownFact(key="BusPostcode",value="ABC 123"))
+        user = GovernmentGatewayUser(
+          name=s"$firstName $lastName", username=username,password=password, role="User",
+          affinityGroup=affinityGroup, credentialIdentifier=credential,knownFacts=facts,
+          groupIdentifier=groupId, enrolments=enrolments, allEnrolments=enrolments)
+        login = GovernmentGatewayLogin(credId = credential, affinityGroup=affinityGroup,
+          enrolments=enrolments.map(x => AuthEnrolment(key=x.key,identifiers = facts)))
+        _ <- http.POST[GovernmentGatewayUser, HttpResponse](s"$ggStubUrl/test-only/users", user, Seq("Content-Type"->"application/json"))
+        auth <- http.POST[GovernmentGatewayLogin, HttpResponse](s"$authUrl/auth/sessions", login, Seq("Content-Type"->"application/json"))
+        sessionLink = auth.header("Location").get
+        session <- http.GET[Session](s"$authUrl${sessionLink}")
+        _ <- individuals.update(accountId,account.copy(externalId=session.externalId))
+      } yield (auth.status,auth.body,auth.allHeaders,session)
+    }) map { auth => LOG(s"AUTH: $auth")}
   }
 }
 
@@ -111,7 +165,7 @@ class TestCreateAccountServiceSpec extends FlatSpec with MustMatchers with Mocki
 
   it should "Create user in Data Platform and GG stubs" in {
     val id = 5
-    val result = service.createUser(username=s"user$id", password=s"pass$id", groupId="stub-group-3", credential=s"cred$id")
+    val result = service.createUser(username=s"user$id", password=s"pass$id", lastName=s"User $id",groupId="stub-group-3", credential=s"cred$id")
     Await.result(result, 10 seconds)
   }
 
